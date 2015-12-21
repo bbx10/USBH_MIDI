@@ -361,13 +361,17 @@ uint32_t USBH_MIDI::Release()
 uint8_t USBH_MIDI::Release()
 #endif
 {
+#ifdef ARDUINO_SAM_DUE
+  // Free allocated host pipes
+  UHD_Pipe_Free(epInfo[epDataInIndex].hostPipeNum);
+  UHD_Pipe_Free(epInfo[epDataOutIndex].hostPipeNum);
+  ready        = 0;
+#endif
+
   pUsb->GetAddressPool().FreeAddress(bAddress);
   bNumEP       = 1;		//must have to be reset to 1	
   bAddress     = 0;
   bPollEnable  = false;
-#ifdef ARDUINO_SAM_DUE
-  ready        = 0;
-#endif
   readPtr      = 0;
   return 0;
 }
