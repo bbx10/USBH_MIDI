@@ -24,7 +24,9 @@
  */
 
 #include <usbh_midi.h>
-#include <usbhub.h>
+#ifndef ARDUINO_SAM_DUE
+//#include <usbhub.h>
+#endif
 
 // Satisfy the IDE, which needs to see the include statment in the ino too.
 #ifdef dobogusinclude
@@ -48,6 +50,9 @@ void setup()
   vid = pid = 0;
   Serial.begin(115200);
 
+#ifdef ARDUINO_SAM_DUE
+  Serial.println("USBH_MIDI_dump");
+#else
   //Workaround for non UHS2.0 Shield 
   pinMode(7,OUTPUT);
   digitalWrite(7,HIGH);
@@ -55,6 +60,7 @@ void setup()
   if (Usb.Init() == -1) {
     while(1); //halt
   }//if (Usb.Init() == -1...
+#endif
   delay( 200 );
 }
 

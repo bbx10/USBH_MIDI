@@ -26,7 +26,26 @@
 
 #if !defined(_USBH_MIDI_H_)
 #define _USBH_MIDI_H_
+
 #include <Usb.h>
+#include <Arduino.h>
+
+#ifdef ARDUINO_SAM_DUE
+#define DEBUG           (0)
+#define DEBUG_USB_HOST  (0)
+#define USB     USBHost
+#define epAddr  deviceEpNum
+
+#if DEBUG_USB_HOST_DUE
+#define USBTRACE(...)                   printf(__VA_ARGS__)
+#define USBTRACE2(format, var1)         printf(format "%x\r\n", var1)
+#define USBTRACE3(format, var1, var2)   printf(format "%x %x\r\n", var1, var2)
+#else
+#define USBTRACE(...)
+#define USBTRACE2(...)
+#define USBTRACE3(...)
+#endif
+#endif
 
 #define MIDI_MAX_ENDPOINTS 5 //endpoint 0, bulk_IN(MIDI), bulk_OUT(MIDI), bulk_IN(VSP), bulk_OUT(VSP)
 #define USB_SUBCLASS_MIDISTREAMING 3
@@ -49,6 +68,9 @@ protected:
   uint8_t  bAddress;
   uint8_t  bConfNum;    // configuration number
   uint8_t  bNumEP;      // total number of EP in the configuration
+#ifdef ARDUINO_SAM_DUE
+  uint8_t  ready;
+#endif
   bool     bPollEnable;
   /* Endpoint data structure */
   EpInfo  epInfo[MIDI_MAX_ENDPOINTS];
@@ -77,10 +99,22 @@ public:
   inline uint8_t RcvData(uint8_t *outBuf){ return RecvData(outBuf); };
   
   // USBDeviceConfig implementation
+#ifdef ARDUINO_SAM_DUE
+  virtual uint32_t ConfigureDevice(uint32_t parent, uint32_t port, uint32_t lowspeed)
+  {
+    return Init(parent, port, lowspeed); // Just call Init. Yes, really!
+  };
+  virtual uint32_t Init(uint32_t parent, uint32_t port, uint32_t lowspeed);
+  virtual uint32_t Release();
+  virtual uint32_t Poll(){ return 0; }; //not implemented
+  virtual uint32_t GetAddress() { return bAddress; };
+  virtual uint32_t isReady() { return ready; };
+#else
   virtual uint8_t Init(uint8_t parent, uint8_t port, bool lowspeed);
   virtual uint8_t Release();
   virtual uint8_t Poll(){}; //not implemented
   virtual uint8_t GetAddress() { return bAddress; };
+#endif
 };
 
 #endif //_USBH_MIDI_H_

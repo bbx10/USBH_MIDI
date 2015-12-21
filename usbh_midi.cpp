@@ -23,7 +23,6 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  *******************************************************************************
  */
-
 #include "usbh_midi.h"
 //////////////////////////
 // MIDI MESAGES 
@@ -91,11 +90,19 @@ USBH_MIDI::USBH_MIDI(USB *p)
   bNumEP = 1;
   bPollEnable  = false;
   isMidiFound = false;
+#ifdef ARDUINO_SAM_DUE
+  ready = 0;
+#endif
   readPtr = 0;
 
   // initialize endpoint data structures
   for(uint8_t i=0; i<MIDI_MAX_ENDPOINTS; i++) {
+#ifdef ARDUINO_SAM_DUE
+    epInfo[i].deviceEpNum   = 0;
+    epInfo[i].hostPipeNum   = 0;
+#else
     epInfo[i].epAddr        = 0;
+#endif
     epInfo[i].maxPktSize  = (i) ? 0 : 8;
     epInfo[i].epAttribs     = 0;
 //    epInfo[i].bmNakPower  = (i) ? USB_NAK_NOWAIT : USB_NAK_MAX_POWER;
@@ -109,7 +116,11 @@ USBH_MIDI::USBH_MIDI(USB *p)
 }
 
 /* Connection initialization of an MIDI Device */
+#ifdef ARDUINO_SAM_DUE
+uint32_t USBH_MIDI::Init(uint32_t parent, uint32_t port, uint32_t lowspeed)
+#else
 uint8_t USBH_MIDI::Init(uint8_t parent, uint8_t port, bool lowspeed)
+#endif
 {
   uint8_t    buf[DESC_BUFF_SIZE];
   uint8_t    rcode;
@@ -288,7 +299,8 @@ void USBH_MIDI::parseConfigDescr( byte addr, byte conf )
         break;
       case USB_DESCRIPTOR_ENDPOINT :
         epDesc = (USB_ENDPOINT_DESCRIPTOR *)buf_ptr;
-        if ((epDesc->bmAttributes & 0x02) == 2) {//bulk
+        if ((epDesc->bmAttributes & bmUSB_TRANSFER_TYPE) == USB_TRANSFER_TYPE_BULK) {//bulk
+#ifndef ARDUINO_SAM_DUE
           uint8_t index;
           if( isMidi )
               index = ((epDesc->bEndpointAddress & 0x80) == 0x80) ? epDataInIndex : epDataOutIndex;
@@ -296,8 +308,41 @@ void USBH_MIDI::parseConfigDescr( byte addr, byte conf )
               index = ((epDesc->bEndpointAddress & 0x80) == 0x80) ? epDataInIndexVSP : epDataOutIndexVSP;
           epInfo[index].epAddr		= (epDesc->bEndpointAddress & 0x0F);
           epInfo[index].maxPktSize	= (uint8_t)epDesc->wMaxPacketSize;
+#else
+          uint8_t index, pipe;
+          if( isMidi ) {
+            if ((epDesc->bEndpointAddress & 0x80) == 0x80) {
+              // Input
+              index = epDataInIndex;
+              epInfo[index].epAddr	= (epDesc->bEndpointAddress & 0x0F);
+              epInfo[index].maxPktSize	= (uint8_t)epDesc->wMaxPacketSize;
+              pipe = UHD_Pipe_Alloc(bAddress, epInfo[index].epAddr,
+                  UOTGHS_HSTPIPCFG_PTYPE_BLK, UOTGHS_HSTPIPCFG_PTOKEN_IN,
+                  epInfo[index].maxPktSize, 0, UOTGHS_HSTPIPCFG_PBK_1_BANK);
+            }
+            else {
+              // Output
+              index = epDataOutIndex;
+              epInfo[index].epAddr	= (epDesc->bEndpointAddress & 0x0F);
+              epInfo[index].maxPktSize	= (uint8_t)epDesc->wMaxPacketSize;
+              pipe = UHD_Pipe_Alloc(bAddress, epInfo[index].epAddr,
+                  UOTGHS_HSTPIPCFG_PTYPE_BLK, UOTGHS_HSTPIPCFG_PTOKEN_OUT,
+                  epInfo[index].maxPktSize, 0, UOTGHS_HSTPIPCFG_PBK_1_BANK);
+            }
+            // Ensure pipe allocation is okay
+            if (pipe == 0)
+            {
+              // allocation failed, so user should not perform write/read since isReady will return false
+              return;
+            }
+            epInfo[index].hostPipeNum = pipe;
+          }
+          else {
+              index = ((epDesc->bEndpointAddress & 0x80) == 0x80) ? epDataInIndexVSP : epDataOutIndexVSP;
+          }
+#endif
           bNumEP ++;
-#ifdef DEBUG
+#if defined(DEBUG) && !defined(ARDUINO_SAM_DUE)
           PrintEndpointDescriptor(epDesc);
 #endif
         }
@@ -310,12 +355,19 @@ void USBH_MIDI::parseConfigDescr( byte addr, byte conf )
 }
 
 /* Performs a cleanup after failed Init() attempt */
+#ifdef ARDUINO_SAM_DUE
+uint32_t USBH_MIDI::Release()
+#else
 uint8_t USBH_MIDI::Release()
+#endif
 {
   pUsb->GetAddressPool().FreeAddress(bAddress);
   bNumEP       = 1;		//must have to be reset to 1	
   bAddress     = 0;
   bPollEnable  = false;
+#ifdef ARDUINO_SAM_DUE
+  ready        = 0;
+#endif
   readPtr      = 0;
   return 0;
 }
@@ -324,7 +376,13 @@ uint8_t USBH_MIDI::Release()
 uint8_t USBH_MIDI::RecvData(uint16_t *bytes_rcvd, uint8_t *dataptr)
 {
   *bytes_rcvd = (uint16_t)epInfo[epDataInIndex].maxPktSize;
+#ifdef ARDUINO_SAM_DUE
+  uint32_t ui32 = *bytes_rcvd;
+  uint8_t  r = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &ui32, dataptr);
+  *bytes_rcvd = ui32;
+#else
   uint8_t  r = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, bytes_rcvd, dataptr);
+#endif
 
   if( *bytes_rcvd < (MIDI_EVENT_PACKET_SIZE-4)){
 	dataptr[*bytes_rcvd] = '\0';
@@ -420,7 +478,7 @@ uint8_t USBH_MIDI::SendData(uint8_t *dataptr, byte nCable)
   return pUsb->outTransfer(bAddress, epInfo[epDataOutIndex].epAddr, 4, buf);
 }
 
-#ifdef DEBUG
+#if defined(DEBUG) && !defined(ARDUINO_SAM_DUE)
 void USBH_MIDI::PrintEndpointDescriptor( const USB_ENDPOINT_DESCRIPTOR* ep_ptr )
 {
 	Notify(PSTR("Endpoint descriptor:"));
