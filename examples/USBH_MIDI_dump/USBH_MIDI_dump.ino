@@ -23,9 +23,9 @@
  *******************************************************************************
  */
 
-#include <usbh_midi.h>
+#include "usbh_midi.h"
 #ifndef ARDUINO_SAM_DUE
-//#include <usbhub.h>
+#include <usbhub.h>
 #endif
 
 // Satisfy the IDE, which needs to see the include statment in the ino too.
@@ -50,7 +50,7 @@ void setup()
   vid = pid = 0;
   Serial.begin(115200);
 
-#ifdef ARDUINO_SAM_DUE
+#if defined(ARDUINO_SAM_DUE) || defined(ARDUINO_SAMD_ZERO)
   Serial.println("USBH_MIDI_dump");
 #else
   //Workaround for non UHS2.0 Shield 
@@ -67,12 +67,24 @@ void setup()
 void loop()
 {
   unsigned long t1;
+  static uint32_t lastState;
+  uint32_t currState;
 
   Usb.Task();
   t1 = micros();
+  currState = Usb.getUsbTaskState();
+  if (currState != lastState) {
+    Serial.print("Last state "); Serial.print(lastState);
+    Serial.print(" Curr "); Serial.println(currState);
+    lastState = currState;
+  }
   if( Usb.getUsbTaskState() == USB_STATE_RUNNING )
   {
+    unsigned long startMillis = millis();
+    unsigned long delta;
     MIDI_poll();
+    delta = millis() - startMillis;
+    if (delta > 10) Serial.println(delta);
   }
   //delay(1ms)
   //doDelay(t1, micros(), 1000);
@@ -91,12 +103,13 @@ void MIDI_poll()
       vid = Midi.vid;
       pid = Midi.pid;
     }
+    rcvd = sizeof(bufMidi);
     if(Midi.RecvData( &rcvd,  bufMidi) == 0 ){
         sprintf(buf, "%08X: ", millis());
         Serial.print(buf);
         Serial.print(rcvd);
         Serial.print(':');
-        for(int i=0; i<64; i++){
+        for(int i=0; i<rcvd; i++){
           sprintf(buf, " %02X", bufMidi[i]);
           Serial.print(buf);
         }

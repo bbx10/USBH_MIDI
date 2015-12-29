@@ -31,8 +31,8 @@
 #include <Arduino.h>
 
 #ifdef ARDUINO_SAM_DUE
-#define DEBUG           (0)
-#define DEBUG_USB_HOST  (0)
+//#define DEBUG           (1)
+//#define DEBUG_USB_HOST  (1)
 #define USB     USBHost
 #define epAddr  deviceEpNum
 
@@ -45,7 +45,26 @@
 #define USBTRACE2(...)
 #define USBTRACE3(...)
 #endif
+
+#elif defined(ARDUINO_SAMD_ZERO)
+// WARNING: Debug must be on for this to work on Zero.
+// TODO: Find root cause of this problem.
+#define DEBUG           (1)
+#define DEBUG_USB_HOST  (1)
+#define USB     USBHost
+#define Usb     UsbController
+#define UsbDevice UsbDeviceDefinition
+#if DEBUG_USB_HOST
+#define USBTRACE(...)                   Serial.println(__VA_ARGS__)
+#define USBTRACE2(format, var1)         { Serial.print(format);\
+                                          Serial.println(var1, HEX); }
+#define USBTRACE3(format, var1, var2)   { Serial.print(format);\
+                                          Serial.print(var1, HEX);\
+                                          Serial.print(' ');\
+                                          Serial.println(var2, HEX); }
 #endif
+#endif
+
 
 #define MIDI_MAX_ENDPOINTS 5 //endpoint 0, bulk_IN(MIDI), bulk_OUT(MIDI), bulk_IN(VSP), bulk_OUT(VSP)
 #define USB_SUBCLASS_MIDISTREAMING 3
@@ -68,7 +87,7 @@ protected:
   uint8_t  bAddress;
   uint8_t  bConfNum;    // configuration number
   uint8_t  bNumEP;      // total number of EP in the configuration
-#ifdef ARDUINO_SAM_DUE
+#if defined(ARDUINO_SAM_DUE) || defined(ARDUINO_SAMD_ZERO)
   uint8_t  ready;
 #endif
   bool     bPollEnable;
@@ -99,16 +118,28 @@ public:
   inline uint8_t RcvData(uint8_t *outBuf){ return RecvData(outBuf); };
   
   // USBDeviceConfig implementation
-#ifdef ARDUINO_SAM_DUE
-  virtual uint32_t ConfigureDevice(uint32_t parent, uint32_t port, uint32_t lowspeed)
-  {
-    return Init(parent, port, lowspeed); // Just call Init. Yes, really!
-  };
+#if defined(ARDUINO_SAM_DUE) || defined(ARDUINO_SAMD_ZERO)
   virtual uint32_t Init(uint32_t parent, uint32_t port, uint32_t lowspeed);
   virtual uint32_t Release();
   virtual uint32_t Poll(){ return 0; }; //not implemented
-  virtual uint32_t GetAddress() { return bAddress; };
+  virtual uint32_t GetAddress() {
+#ifdef DEBUG
+    USBTRACE2("MIDI GetAddress ", bAddress);
+#endif
+    return bAddress;
+  };
   virtual uint32_t isReady() { return ready; };
+#ifdef ARDUINO_SAMD_ZERO
+  virtual uint32_t VIDPIDOK(uint32_t /* vid */, uint32_t /* pid */) {
+    USBTRACE("USBMIDI::VIDPIDOK");
+    return true;
+  }
+
+  virtual uint32_t DEVCLASSOK(uint32_t /* klass */) {
+    USBTRACE("USBMIDI::DEVCLASSOK");
+    return true;
+  }
+#endif
 #else
   virtual uint8_t Init(uint8_t parent, uint8_t port, bool lowspeed);
   virtual uint8_t Release();
