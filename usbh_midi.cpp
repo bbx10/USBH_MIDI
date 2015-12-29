@@ -90,7 +90,7 @@ USBH_MIDI::USBH_MIDI(USB *p)
   bNumEP = 1;
   bPollEnable  = false;
   isMidiFound = false;
-#ifdef ARDUINO_SAM_DUE
+#if defined(ARDUINO_SAM_DUE) || defined(ARDUINO_SAMD_ZERO)
   ready = 0;
 #endif
   readPtr = 0;
@@ -116,7 +116,7 @@ USBH_MIDI::USBH_MIDI(USB *p)
 }
 
 /* Connection initialization of an MIDI Device */
-#ifdef ARDUINO_SAM_DUE
+#if defined(ARDUINO_SAM_DUE) || defined(ARDUINO_SAMD_ZERO)
 uint32_t USBH_MIDI::Init(uint32_t parent, uint32_t port, uint32_t lowspeed)
 #else
 uint8_t USBH_MIDI::Init(uint8_t parent, uint8_t port, bool lowspeed)
@@ -239,6 +239,9 @@ uint8_t USBH_MIDI::Init(uint8_t parent, uint8_t port, bool lowspeed)
   USBTRACE("Init done.");
 #endif
   bPollEnable = true;
+#if defined(ARDUINO_SAM_DUE) || defined(ARDUINO_SAMD_ZERO)
+  ready = true;
+#endif
   return 0;
 FailGetDevDescr:
 FailSetDevTblEntry:
@@ -300,7 +303,84 @@ void USBH_MIDI::parseConfigDescr( byte addr, byte conf )
       case USB_DESCRIPTOR_ENDPOINT :
         epDesc = (USB_ENDPOINT_DESCRIPTOR *)buf_ptr;
         if ((epDesc->bmAttributes & bmUSB_TRANSFER_TYPE) == USB_TRANSFER_TYPE_BULK) {//bulk
-#ifndef ARDUINO_SAM_DUE
+#ifdef ARDUINO_SAM_DUE
+          // TODO potential endian problem with wMaxPacketSize
+          uint8_t index, pipe;
+          if( isMidi ) {
+            uint8_t pipe;
+            uint32_t pipeDirection;
+            bool transferDirIn;
+            EpInfo *epInfoPtr;
+            transferDirIn = (epDesc->bEndpointAddress & 0x80) == 0x80;
+            if (transferDirIn) {
+              epInfoPtr = &epInfo[epDataInIndex];
+              pipeDirection = UOTGHS_HSTPIPCFG_PTOKEN_IN;
+            }
+            else {
+              epInfoPtr = &epInfo[epDataOutIndex];
+              pipeDirection = UOTGHS_HSTPIPCFG_PTOKEN_OUT;
+            }
+
+            // Fill in the endpoint info structure
+            epInfoPtr->epAddr = (epDesc->bEndpointAddress & 0x0F);
+            epInfoPtr->maxPktSize = (uint8_t)epDesc->wMaxPacketSize;
+            pipe = UHD_Pipe_Alloc(bAddress, epInfoPtr->epAddr,
+                  UOTGHS_HSTPIPCFG_PTYPE_BLK, pipeDirection,
+                  epInfoPtr->maxPktSize, 0, UOTGHS_HSTPIPCFG_PBK_1_BANK);
+
+            // Ensure pipe allocation is okay
+            if (pipe == 0) {
+              // allocation failed, so user should not perform write/read since isReady will return false
+              return;
+            }
+            epInfoPtr->hostPipeNum = pipe;
+          }
+          else {
+              index = ((epDesc->bEndpointAddress & 0x80) == 0x80) ? epDataInIndexVSP : epDataOutIndexVSP;
+              epInfo[index].epAddr	= (epDesc->bEndpointAddress & 0x0F);
+              epInfo[index].maxPktSize	= (uint8_t)epDesc->wMaxPacketSize;
+          }
+#elif defined(ARDUINO_SAMD_ZERO)
+          if( isMidi ) {
+            uint8_t pipe;
+            uint32_t pipeDirection;
+            bool transferDirIn;
+            EpInfo *epInfoPtr;
+
+            transferDirIn = (epDesc->bEndpointAddress & 0x80) == 0x80;
+            if (transferDirIn) {
+              epInfoPtr = &epInfo[epDataInIndex];
+              pipeDirection = USB_EP_DIR_IN;
+            }
+            else {
+              epInfoPtr = &epInfo[epDataOutIndex];
+              pipeDirection = USB_EP_DIR_OUT;
+            }
+
+            // Fill in the endpoint info structure
+            epInfoPtr->epAddr = (epDesc->bEndpointAddress & 0x0F);
+            epInfoPtr->maxPktSize = (uint8_t)epDesc->wMaxPacketSize;
+            epInfoPtr->bmSndToggle = 0;
+            epInfoPtr->bmRcvToggle = 0;
+
+            pipe = UHD_Pipe_Alloc(bAddress, epInfoPtr->epAddr,
+                USB_HOST_PTYPE_BULK, pipeDirection,
+                epInfoPtr->maxPktSize, 0, USB_HOST_NB_BK_1);
+
+            // Ensure pipe allocation is okay
+            if (pipe == 0)
+            {
+              // allocation failed, so user should not perform write/read since isReady will return false
+              return;
+            }
+          }
+          else {
+            uint8_t index;
+            index = ((epDesc->bEndpointAddress & 0x80) == 0x80) ? epDataInIndexVSP : epDataOutIndexVSP;
+            epInfo[index].epAddr	= (epDesc->bEndpointAddress & 0x0F);
+            epInfo[index].maxPktSize	= (uint8_t)epDesc->wMaxPacketSize;
+          }
+#else
           uint8_t index;
           if( isMidi )
               index = ((epDesc->bEndpointAddress & 0x80) == 0x80) ? epDataInIndex : epDataOutIndex;
@@ -308,41 +388,9 @@ void USBH_MIDI::parseConfigDescr( byte addr, byte conf )
               index = ((epDesc->bEndpointAddress & 0x80) == 0x80) ? epDataInIndexVSP : epDataOutIndexVSP;
           epInfo[index].epAddr		= (epDesc->bEndpointAddress & 0x0F);
           epInfo[index].maxPktSize	= (uint8_t)epDesc->wMaxPacketSize;
-#else
-          uint8_t index, pipe;
-          if( isMidi ) {
-            if ((epDesc->bEndpointAddress & 0x80) == 0x80) {
-              // Input
-              index = epDataInIndex;
-              epInfo[index].epAddr	= (epDesc->bEndpointAddress & 0x0F);
-              epInfo[index].maxPktSize	= (uint8_t)epDesc->wMaxPacketSize;
-              pipe = UHD_Pipe_Alloc(bAddress, epInfo[index].epAddr,
-                  UOTGHS_HSTPIPCFG_PTYPE_BLK, UOTGHS_HSTPIPCFG_PTOKEN_IN,
-                  epInfo[index].maxPktSize, 0, UOTGHS_HSTPIPCFG_PBK_1_BANK);
-            }
-            else {
-              // Output
-              index = epDataOutIndex;
-              epInfo[index].epAddr	= (epDesc->bEndpointAddress & 0x0F);
-              epInfo[index].maxPktSize	= (uint8_t)epDesc->wMaxPacketSize;
-              pipe = UHD_Pipe_Alloc(bAddress, epInfo[index].epAddr,
-                  UOTGHS_HSTPIPCFG_PTYPE_BLK, UOTGHS_HSTPIPCFG_PTOKEN_OUT,
-                  epInfo[index].maxPktSize, 0, UOTGHS_HSTPIPCFG_PBK_1_BANK);
-            }
-            // Ensure pipe allocation is okay
-            if (pipe == 0)
-            {
-              // allocation failed, so user should not perform write/read since isReady will return false
-              return;
-            }
-            epInfo[index].hostPipeNum = pipe;
-          }
-          else {
-              index = ((epDesc->bEndpointAddress & 0x80) == 0x80) ? epDataInIndexVSP : epDataOutIndexVSP;
-          }
 #endif
           bNumEP ++;
-#if defined(DEBUG) && !defined(ARDUINO_SAM_DUE)
+#if defined(DEBUG) && (!defined(ARDUINO_SAM_DUE) && !defined(ARDUINO_SAMD_ZERO))
           PrintEndpointDescriptor(epDesc);
 #endif
         }
@@ -355,7 +403,7 @@ void USBH_MIDI::parseConfigDescr( byte addr, byte conf )
 }
 
 /* Performs a cleanup after failed Init() attempt */
-#ifdef ARDUINO_SAM_DUE
+#if defined(ARDUINO_SAM_DUE) || defined(ARDUINO_SAMD_ZERO)
 uint32_t USBH_MIDI::Release()
 #else
 uint8_t USBH_MIDI::Release()
@@ -365,6 +413,8 @@ uint8_t USBH_MIDI::Release()
   // Free allocated host pipes
   UHD_Pipe_Free(epInfo[epDataInIndex].hostPipeNum);
   UHD_Pipe_Free(epInfo[epDataOutIndex].hostPipeNum);
+#endif
+#if defined(ARDUINO_SAM_DUE) || defined(ARDUINO_SAMD_ZERO)
   ready        = 0;
 #endif
 
@@ -384,6 +434,10 @@ uint8_t USBH_MIDI::RecvData(uint16_t *bytes_rcvd, uint8_t *dataptr)
   uint32_t ui32 = *bytes_rcvd;
   uint8_t  r = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &ui32, dataptr);
   *bytes_rcvd = ui32;
+#elif defined(ARDUINO_SAMD_ZERO)
+  uint8_t ui8 = *bytes_rcvd;
+  uint8_t  r = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, &ui8, dataptr);
+  *bytes_rcvd = ui8;
 #else
   uint8_t  r = pUsb->inTransfer(bAddress, epInfo[epDataInIndex].epAddr, bytes_rcvd, dataptr);
 #endif
@@ -482,7 +536,7 @@ uint8_t USBH_MIDI::SendData(uint8_t *dataptr, byte nCable)
   return pUsb->outTransfer(bAddress, epInfo[epDataOutIndex].epAddr, 4, buf);
 }
 
-#if defined(DEBUG) && !defined(ARDUINO_SAM_DUE)
+#if defined(DEBUG) && (!defined(ARDUINO_SAM_DUE) && !defined(ARDUINO_SAMD_ZERO))
 void USBH_MIDI::PrintEndpointDescriptor( const USB_ENDPOINT_DESCRIPTOR* ep_ptr )
 {
 	Notify(PSTR("Endpoint descriptor:"));
