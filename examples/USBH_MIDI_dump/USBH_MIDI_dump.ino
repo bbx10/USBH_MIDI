@@ -25,7 +25,7 @@
 
 #include <usbh_midi.h>
 #ifndef ARDUINO_SAM_DUE
-//#include <usbhub.h>
+#include <usbhub.h>
 #endif
 
 // Satisfy the IDE, which needs to see the include statment in the ino too.
